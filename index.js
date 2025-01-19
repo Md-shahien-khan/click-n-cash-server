@@ -31,6 +31,21 @@ async function run() {
 
     // user collection
     const userCollection = client.db('clickAndCashDb').collection('userCollection');
+    // All Task collection
+    const tasksCollection = client.db('clickAndCashDb').collection('tasksCollection');
+
+    // get all tasks
+    app.get('/tasks', async(req, res) =>{
+      const result = await tasksCollection.find().toArray();
+      res.send(result);
+    });
+
+    // get all users
+    app.get('/users', async(req, res) =>{
+      const result = await userCollection.find().toArray();
+      res.send(result);
+    });
+
 
 
     // users related api

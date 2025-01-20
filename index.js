@@ -11,7 +11,7 @@ app.use(express.json());
 
 // cluster connection
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.5uoh0.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -44,6 +44,53 @@ async function run() {
     app.get('/users', async(req, res) =>{
       const result = await userCollection.find().toArray();
       res.send(result);
+    });
+
+    // delete 
+    app.delete('/users/:id', async (req, res) =>{
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)}
+      const result = await userCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    // make admin
+    // app.patch('/users/admin/:id', async(req, res) =>{
+    //   const id = req.params.id;
+    //   const filter = {_id: new ObjectId(id)};
+    //   const updatedDoc = {
+    //     $set : {
+    //       role : 'admin'
+    //     }
+    //   }
+    //   const result = await userCollection.updateOne(filter, updatedDoc);
+    //   res.send(result);
+    // })
+    app.patch('/users/role/:id', async (req, res) => {
+      const id = req.params.id;
+      const { role } = req.body;  // Get the new role from the request body
+  
+      // Ensure the role is one of the valid roles
+      if (!['admin', 'buyer', 'worker'].includes(role)) {
+          return res.status(400).send({ message: 'Invalid role' });
+      }
+  
+      const filter = { _id: new ObjectId(id) };
+      const updatedDoc = {
+          $set: { role }
+      };
+  
+      try {
+          const result = await userCollection.updateOne(filter, updatedDoc);
+          if (result.modifiedCount > 0) {
+              res.send({ message: 'User role updated successfully', modifiedCount: result.modifiedCount });
+          } else {
+              res.send({ message: 'No changes made' });
+          }
+      } catch (err) {
+          console.error(err);
+          res.status(500).send({ message: 'Internal server error' });
+      }
     });
 
 

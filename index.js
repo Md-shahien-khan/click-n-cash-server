@@ -50,6 +50,8 @@ async function run() {
       res.send({ token });
     });
 
+
+    // get user by email
     app.get('/users/:email', async(req, res) =>{
       const email = req.params.email;
       // if(email !== req.decoded.email){
@@ -91,6 +93,15 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/allTasks/:id', async(req, res) => {
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)};
+      const result = await tasksCollection.findOne(query);
+      res.send(result)
+    });
+
+
+
     // get all tasks from email
     app.get('/tasks/:email', async(req, res) =>{
       const email = req.params.email;
@@ -99,12 +110,16 @@ async function run() {
       res.send(result);
     });
 
+
+
     // get all users
     app.get('/users', async(req, res) =>{
       console.log(req.headers);
       const result = await userCollection.find().toArray();
       res.send(result);
     });
+
+
 
     // delete 
     app.delete('/users/:id', async (req, res) =>{
@@ -114,18 +129,9 @@ async function run() {
       res.send(result);
     });
 
-    // make admin
-    // app.patch('/users/admin/:id', async(req, res) =>{
-    //   const id = req.params.id;
-    //   const filter = {_id: new ObjectId(id)};
-    //   const updatedDoc = {
-    //     $set : {
-    //       role : 'admin'
-    //     }
-    //   }
-    //   const result = await userCollection.updateOne(filter, updatedDoc);
-    //   res.send(result);
-    // })
+
+
+    // update user role
     app.patch('/users/role/:id', async (req, res) => {
       const id = req.params.id;
       const { role } = req.body;  // Get the new role from the request body
@@ -156,53 +162,52 @@ async function run() {
 
 
     
-    // app.get('/users/role/:email', async (req, res) => {
-    //   const email = req.params.email
-    //   console.log(email)
-    //   const result = await userCollection.findOne({ email })
-    //   console.log({result})
-    //   res.send(result)
-    //   })
-
-        
-
-
+    // post task 
     app.post('/tasks', async (req, res) => {
-      const newTask = req.body;  // The task data including the image URL
-      console.log("Inserting task:", newTask); 
-      
-      try {
-          const result = await tasksCollection.insertOne(newTask); // Insert the task into the database
-          res.send({ message: "Task added successfully", result });
-      } catch (err) {
-          console.error(err);
-          res.status(500).send({ message: "Failed to add task" });
+      const taskDetails = req.body;  // The task data from the frontend
+      const { required_workers, payable_amount, email } = taskDetails;
+
+      // Fetch user data (including coins) using the provided email
+      const user = await userCollection.findOne({ email: email });
+
+      if (!user) {
+          return res.status(404).send({ message: 'User not found' });
       }
-  });
+
+      const totalPayableAmount = required_workers * payable_amount;
+
+      // Check if the user has enough coins
+      if (user.coins < totalPayableAmount) {
+          return res.status(400).send({
+              message: 'Not enough coins. Please purchase more coins.'
+          });
+      }
+
+      // Save the task to the task collection
+      try {
+          const result = await tasksCollection.insertOne(taskDetails);
+
+          // If the task was successfully saved, update the user's coins
+          const updatedCoins = user.coins - totalPayableAmount;
+          
+          // Update user coins in the user collection
+          await userCollection.updateOne(
+              { email: email },
+              { $set: { coins: updatedCoins } }
+          );
+
+          res.status(200).send({ message: 'Task added successfully and coins deducted.' });
+      } catch (err) {
+          console.error('Error adding task:', err);
+          res.status(500).send({ message: 'Error adding task' });
+      }
+    });
+
   
 
 
-  // // Update Task
-  // app.put('/tasks/:id', async (req, res) => {
-  //   const { id } = req.params;
-  //   const updatedTask = req.body;
 
-  //   try {
-  //     const result = await tasksCollection.updateOne(
-  //       { _id: new ObjectId(id) },
-  //       { $set: updatedTask }
-  //     );
-
-  //     if (result.modifiedCount === 1) {
-  //       res.status(200).send({ message: 'Task updated successfully' });
-  //     } else {
-  //       res.status(400).send({ message: 'No changes made to the task' });
-  //     }
-  //   } catch (error) {
-  //     console.error('Error updating task:', error);
-  //     res.status(500).send({ message: 'Internal Server Error' });
-  //   }
-  // });
+  // update specific task
   app.put('/tasks/:id', async (req, res) => {
     const { id } = req.params;
     const updatedTask = req.body;
@@ -231,27 +236,31 @@ async function run() {
   });
   
 
-  // Delete Task
+  // Delete Task from my task list
   app.delete('/tasks/:id', async (req, res) => {
     const { id } = req.params;
-
-    try {
+    // const body = req.body;
+    // console.log('requested body', body);
+    //   const email = req.query.email;
+    //   const query = {email : email};
+    //   const task = await tasksCollection.findOne(query);
+    //   console.log('my tasks', task)
+    //   const refillAmount = task.required_workers * task.payable_amount;
+    //   const updateResult = await userCollection.updateOne(query, {
+    //     $inc : {
+    //       coins : refillAmount
+    //     }
+    //   })
       const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
-
-      if (result.deletedCount === 1) {
-        res.status(200).send({ message: 'Task deleted successfully' });
-      } else {
-        res.status(404).send({ message: 'Task not found' });
-      }
-    } catch (error) {
-      console.error('Error deleting task:', error);
-      res.status(500).send({ message: 'Internal Server Error' });
-    }
+      // required_workers
+      res.send(result);
   });
 
-  // manage task
-  // Delete Task
-  app.delete('/tasks/:id', async (req, res) => {
+
+
+
+  // Delete Task by admin
+  app.delete('/allTasks/:id', async (req, res) => {
     const { id } = req.params;
 
     try {
@@ -273,83 +282,30 @@ async function run() {
 
 
   // Update User's Coins
-app.patch('/users/coins/:id', async (req, res) => {
-  const { id } = req.params;
-  const { coins } = req.body;  // Get the new coin amount
+  app.patch('/users/coins/:id', async (req, res) => {
+    const { id } = req.params;
+    const { coins } = req.body;  // Get the new coin amount
 
-  try {
-      // Find the user and update their coins
-      const filter = { _id: new ObjectId(id) };
-      const updatedDoc = {
-          $set: { coins }
-      };
+    try {
+        // Find the user and update their coins
+        const filter = { _id: new ObjectId(id) };
+        const updatedDoc = {
+            $set: { coins }
+        };
 
-      const result = await userCollection.updateOne(filter, updatedDoc);
+        const result = await userCollection.updateOne(filter, updatedDoc);
 
-      if (result.modifiedCount > 0) {
-          res.send({ message: 'User coins updated successfully' });
-      } else {
-          res.send({ message: 'No changes made' });
-      }
-  } catch (err) {
-      console.error(err);
-      res.status(500).send({ message: 'Internal server error' });
-  }
-});
+        if (result.modifiedCount > 0) {
+            res.send({ message: 'User coins updated successfully' });
+        } else {
+            res.send({ message: 'No changes made' });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: 'Internal server error' });
+    }
+  });
   
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Route to save submission details todo for task details and submission
-// app.post('/submissions', async (req, res) => {
-//   const submissionData = req.body;
-
-//   try {
-//     const result = await submissionsCollection.insertOne(submissionData);
-//     res.status(200).send({ message: 'Submission saved successfully', result });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send({ message: 'Failed to save submission' });
-//   }
-// });
-
-// // Route to get task by ID
-// app.get('/tasks/:id', async (req, res) => {
-//   const { id } = req.params;
-//   const query = { _id: new ObjectId(id) };
-  
-//   try {
-//     const task = await tasksCollection.findOne(query);
-//     if (task) {
-//       res.send(task);
-//     } else {
-//       res.status(404).send({ message: 'Task not found' });
-//     }
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send({ message: 'Failed to fetch task' });
-//   }
-// });
-
-
-
-
-
-
-
-
 
 
     // users related api
@@ -363,7 +319,56 @@ app.patch('/users/coins/:id', async (req, res) => {
       }
       const result = await userCollection.insertOne(user);
       res.send(result);
-    })
+    });
+
+
+
+
+
+
+
+    
+  // Assuming you already have this endpoint to update user data
+  app.put('/users/:id', async (req, res) => {
+    const userId = req.params.id;
+    const { coins } = req.body;  // The updated coin value
+
+    try {
+      const updatedUser = await userCollection.updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { coins: coins } }
+      );
+
+      if (updatedUser.modifiedCount === 1) {
+        res.status(200).send({ message: 'User coins updated successfully' });
+      } else {
+        res.status(404).send({ message: 'User not found' });
+      }
+    } catch (error) {
+      console.error('Error updating user coins:', error);
+      res.status(500).send({ message: 'Internal server error' });
+    }
+  });
+
+  // Add this to your existing backend (app.js or routes.js file)
+  app.post('/submissions', async (req, res) => {
+    const { task_id, task_title, payable_amount, worker_email, submission_details, worker_name, buyer_name, buyer_email, current_date, status } = req.body;
+
+    const submission = {
+      task_id,
+      task_title,
+      payable_amount,
+      worker_email,
+      submission_details,
+      worker_name,
+      buyer_name,
+      buyer_email,
+      current_date,
+      status
+    };
+    const result = await submissionsCollection.insertOne(submission);
+    res.send(result);
+  });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -372,6 +377,8 @@ app.patch('/users/coins/:id', async (req, res) => {
     // Ensures that the client will close when you finish/error
     // await client.close();
   }
+
+
 }
 run().catch(console.dir);
 

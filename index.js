@@ -350,7 +350,7 @@ async function run() {
     }
   });
 
-  // Add this to your existing backend (app.js or routes.js file)
+  // submit tasks post part
   app.post('/submissions', async (req, res) => {
     const { task_id, task_title, payable_amount, worker_email, submission_details, worker_name, buyer_name, buyer_email, current_date, status } = req.body;
 
@@ -376,7 +376,16 @@ async function run() {
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
-  }
+  };
+
+  // submit tasks get part
+
+  app.get('/allSubmissions', async(req, res) =>{
+    const result = await submissionsCollection.find().toArray();
+    res.send(result);
+  });
+
+
 
 
 }

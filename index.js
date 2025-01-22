@@ -50,19 +50,15 @@ async function run() {
       res.send({ token });
     });
 
-    app.get('/users/admin/:email', async(req, res) =>{
+    app.get('/users/:email', async(req, res) =>{
       const email = req.params.email;
       // if(email !== req.decoded.email){
       //   return res.status(403).send({message : 'Forbidden Access'})
       // }
       const query = {email : email};
-      const user = await userCollection.findOne(query);
-      let admin = false;
-      if(user){
-        admin = user?.role === "admin";
-      }
-      res.send({admin});
-    })
+      const result = await userCollection.findOne(query);
+      res.send(result);
+    });
 
     // middle ware
     const verifyToken = (req, res, next) =>{
@@ -86,10 +82,20 @@ async function run() {
     const userCollection = client.db('clickAndCashDb').collection('userCollection');
     // All Task collection
     const tasksCollection = client.db('clickAndCashDb').collection('tasksCollection');
+    // Create a new collection for submissions
+    const submissionsCollection = client.db('clickAndCashDb').collection('submissionsCollection');
 
-    // get all tasks
-    app.get('/tasks', async(req, res) =>{
+    // get Tasks
+    app.get('/allTasks', async(req, res) =>{
       const result = await tasksCollection.find().toArray();
+      res.send(result);
+    });
+
+    // get all tasks from email
+    app.get('/tasks/:email', async(req, res) =>{
+      const email = req.params.email;
+      const query = {email : email}
+      const result = await tasksCollection.find(query).toArray();
       res.send(result);
     });
 
@@ -243,6 +249,26 @@ async function run() {
     }
   });
 
+  // manage task
+  // Delete Task
+  app.delete('/tasks/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount === 1) {
+            res.status(200).send({ message: 'Task deleted successfully' });
+        } else {
+            res.status(404).send({ message: 'Task not found' });
+        }
+    } catch (error) {
+        console.error('Error deleting task:', error);
+        res.status(500).send({ message: 'Internal Server Error' });
+    }
+  });
+
+
 
 
 
@@ -271,6 +297,51 @@ app.patch('/users/coins/:id', async (req, res) => {
   }
 });
   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Route to save submission details todo for task details and submission
+// app.post('/submissions', async (req, res) => {
+//   const submissionData = req.body;
+
+//   try {
+//     const result = await submissionsCollection.insertOne(submissionData);
+//     res.status(200).send({ message: 'Submission saved successfully', result });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send({ message: 'Failed to save submission' });
+//   }
+// });
+
+// // Route to get task by ID
+// app.get('/tasks/:id', async (req, res) => {
+//   const { id } = req.params;
+//   const query = { _id: new ObjectId(id) };
+  
+//   try {
+//     const task = await tasksCollection.findOne(query);
+//     if (task) {
+//       res.send(task);
+//     } else {
+//       res.status(404).send({ message: 'Task not found' });
+//     }
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send({ message: 'Failed to fetch task' });
+//   }
+// });
 
 
 

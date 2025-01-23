@@ -321,13 +321,6 @@ async function run() {
       res.send(result);
     });
 
-
-
-
-
-
-
-    
   // Assuming you already have this endpoint to update user data
   app.put('/users/:id', async (req, res) => {
     const userId = req.params.id;
@@ -369,6 +362,20 @@ async function run() {
     const result = await submissionsCollection.insertOne(submission);
     res.send(result);
   });
+  // get all submission
+  app.get('/allSubmissions', async(req, res) =>{
+    const result = await submissionsCollection.find().toArray();
+    res.send(result);
+  });
+  // get submission from particular email person
+  app.get('/allSubmissions/:email', async(req, res) =>{
+    const worker_email = req.params.worker_email;
+    const query = {email : worker_email}
+    const result = await submissionsCollection.find(query).toArray();
+    res.send(result);
+  });
+
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -377,15 +384,6 @@ async function run() {
     // Ensures that the client will close when you finish/error
     // await client.close();
   };
-
-  // submit tasks get part
-
-  app.get('/allSubmissions', async(req, res) =>{
-    const result = await submissionsCollection.find().toArray();
-    res.send(result);
-  });
-
-
 
 
 }

@@ -362,7 +362,7 @@ async function run() {
     const result = await submissionsCollection.insertOne(submission);
     res.send(result);
   });
-  // get all submission
+  // get all submission works
   app.get('/allSubmissions', async(req, res) =>{
     const result = await submissionsCollection.find().toArray();
     res.send(result);

@@ -3,6 +3,7 @@ const express = require('express');
 const app = express();
 const cors = require('cors');
 var jwt = require('jsonwebtoken');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const port = process.env.PORT || 5000;
 
 // middleware
@@ -87,6 +88,110 @@ async function run() {
     // Create a new collection for submissions
     const submissionsCollection = client.db('clickAndCashDb').collection('submissionsCollection');
 
+    // Create a new collection for notifications
+    const notificationsCollection = client.db('clickAndCashDb').collection('notificationsCollection');
+
+
+
+
+    // Create Payment Intent
+    app.post('/create-payment-intent', async (req, res) => {
+      try {
+          const { email, amount } = req.body;
+          if (!email || !amount) return res.status(400).send({ error: 'Invalid request' });
+  
+          const paymentIntent = await stripe.paymentIntents.create({
+              amount: amount * 100, // Convert to cents
+              currency: 'usd',
+              payment_method_types: ['card'],
+          });
+  
+          console.log('Payment Intent Created:', paymentIntent); // Log the payment intent
+          res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+          console.error(error);
+          res.status(500).send({ error: 'Payment Intent Error' });
+      }
+  });
+
+    // Update User Coins after successful payment
+    app.post('/update-coins', async (req, res) => {
+      try {
+          const { email, coins } = req.body;
+          if (!email || coins === undefined) return res.status(400).send({ error: 'Invalid request' });
+    
+          const result = await userCollection.updateOne(
+              { email },
+              { $set: { coins } }
+          );
+    
+          res.send({ success: true, message: 'Coins updated successfully', result });
+      } catch (error) {
+          console.error(error);
+          res.status(500).send({ error: 'Failed to update coins' });
+      }
+    });
+
+
+
+
+    // Create Notification Endpoint
+    app.post('/notifications', async (req, res) => {
+      const { user_email, message, type } = req.body;
+
+      try {
+        const notification = {
+          user_email,
+          message,
+          type,
+          status: 'unread',
+          timestamp: new Date(),
+        };
+
+        const result = await notificationsCollection.insertOne(notification);
+        res.status(201).send({ success: true, message: 'Notification created.', data: result });
+      } catch (error) {
+        console.error('Error creating notification:', error);
+        res.status(500).send({ success: false, message: 'Internal server error.' });
+      }
+    });
+
+    // Fetch Notifications for a User
+    app.get('/notifications/:email', async (req, res) => {
+      const email = req.params.email;
+
+      try {
+        const query = { user_email: email };
+        const notifications = await notificationsCollection.find(query).toArray();
+        res.status(200).send({ success: true, data: notifications });
+      } catch (error) {
+        console.error('Error fetching notifications:', error);
+        res.status(500).send({ success: false, message: 'Internal server error.' });
+      }
+    });
+
+    // Mark Notification as Read
+    app.patch('/notifications/:id', async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const result = await notificationsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: 'read' } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.status(200).send({ success: true, message: 'Notification marked as read.' });
+        } else {
+          res.status(404).send({ success: false, message: 'Notification not found.' });
+        }
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+        res.status(500).send({ success: false, message: 'Internal server error.' });
+      }
+    });
+
+
     // get Tasks
     app.get('/allTasks', async(req, res) =>{
       const result = await tasksCollection.find().toArray();
@@ -127,6 +232,23 @@ async function run() {
       const query = {_id: new ObjectId(id)}
       const result = await userCollection.deleteOne(query);
       res.send(result);
+    });
+
+    // payment intent
+    app.post('/create-payment-intent', async(req, res) =>{
+      const {price} = req.body;
+      const amount = parseInt(price * 100);
+      console.log(amount, 'amount inside the intent');
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount : amount,
+        currency : 'usd',
+        payment_method_types : ['card']
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret
+      })
     });
 
 
@@ -203,7 +325,205 @@ async function run() {
       }
     });
 
+
+
+
+
+
+// Worker Submits Work
+app.post('/submissions', async (req, res) => {
+  const body = req.body;
+
+  try {
+    const result = await submissionsCollection.insertOne(body);
+
+    // Create a notification for the buyer
+    const notification = {
+      user_email: body.buyer_email,
+      message: `A worker has submitted work for your task: ${body.task_title}.`,
+      type: 'submission',
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.status(201).send({ success: true, data: result });
+  } catch (error) {
+    console.error('Error submitting work:', error);
+    res.status(500).send({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// Buyer Accepts Work
+app.patch('/acceptTask', async (req, res) => {
+  const { previousId, worker_email, workersCoin, buyer_email } = req.body;
+
+  try {
+    // Update submission status to 'approved'
+    const updateSubmission = await submissionsCollection.updateOne(
+      { _id: new ObjectId(previousId) },
+      { $set: { status: 'approved' } }
+    );
+
+    // Deduct coins from the buyer and add coins to the worker
+    await userCollection.updateOne(
+      { email: buyer_email },
+      { $inc: { coins: -parseInt(workersCoin) } }
+    );
+
+    await userCollection.updateOne(
+      { email: worker_email },
+      { $inc: { coins: parseInt(workersCoin) } }
+    );
+
+    // Create a notification for the worker
+    const notification = {
+      user_email: worker_email,
+      message: `Your submission has been accepted. You have received ${workersCoin} coins.`,
+      type: 'accept',
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.status(200).send({ success: true, message: 'Task accepted and coins transferred.' });
+  } catch (error) {
+    console.error('Error accepting task:', error);
+    res.status(500).send({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// Buyer Rejects Work
+app.patch('/rejectTask', async (req, res) => {
+  const { taskId, worker_email } = req.body;
+
+  try {
+    // Update submission status to 'rejected'
+    const updateSubmission = await submissionsCollection.updateOne(
+      { _id: new ObjectId(taskId) },
+      { $set: { status: 'rejected' } }
+    );
+
+    // Create a notification for the worker
+    const notification = {
+      user_email: worker_email,
+      message: 'Your submission has been rejected.',
+      type: 'reject',
+    };
+
+    await notificationsCollection.insertOne(notification);
+
+    res.status(200).send({ success: true, message: 'Task rejected.' });
+  } catch (error) {
+    console.error('Error rejecting task:', error);
+    res.status(500).send({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+  // Accept Task Endpoint
+  // app.patch('/acceptTask', async (req, res) => {
+  //   const { previousId, worker_email, workersCoin, buyer_email } = req.body;
   
+  //   try {
+  //     // Fetch the buyer's current coins
+  //     const buyer = await userCollection.findOne({ email: buyer_email });
+  //     if (!buyer) {
+  //       return res.status(404).send({ success: false, message: 'Buyer not found.' });
+  //     }
+  
+  //     // // Check if the buyer has enough coins
+  //     // if (buyer.coins < workersCoin) {
+  //     //   return res.status(400).send({ success: false, message: 'Buyer does not have enough coins.' });
+  //     // }
+  
+  //     // Update submission status to 'approved'
+  //     const updateSubmission = await submissionsCollection.updateOne(
+  //       { _id: new ObjectId(previousId) },
+  //       { $set: { status: 'approved' } }
+  //     );
+  
+  //     // Deduct coins from the buyer
+  //     const updateBuyerCoins = await userCollection.updateOne(
+  //       { email: buyer_email },
+  //       { $inc: { coins: -parseInt(workersCoin) } }
+  //     );
+
+  //     console.log(updateBuyerCoins);
+      
+  
+  //     // Add coins to the worker
+  //     const updateWorkerCoins = await userCollection.updateOne(
+  //       { email: worker_email },
+  //       { $inc: { coins: parseInt(workersCoin) } }
+  //     );
+  
+  //     if (
+  //       updateSubmission.modifiedCount > 0 &&
+  //       updateBuyerCoins.modifiedCount > 0 &&
+  //       updateWorkerCoins.modifiedCount > 0
+  //     ) {
+  //       res.send({ success: true, message: 'Task accepted, coins transferred, and buyer coins updated.' });
+  //     } else {
+  //       res.status(400).send({ success: false, message: 'Failed to update task or coins.' });
+  //     }
+  //   } catch (error) {
+  //     console.error('Error accepting task:', error);
+  //     res.status(500).send({ success: false, message: 'Internal server error.' });
+  //   }
+  // });
+
+  // // Reject Task Endpoint
+  // app.patch('/rejectTask', async (req, res) => {
+  //   const { taskId } = req.body;
+
+  //   try {
+  //     // Update submission status to 'rejected'
+  //     const updateSubmission = await submissionsCollection.updateOne(
+  //       { _id: new ObjectId(taskId) },
+  //       { $set: { status: 'rejected' } }
+  //     );
+
+  //     if (updateSubmission.modifiedCount > 0) {
+  //       res.send({ success: true, message: 'Task rejected.' });
+  //     } else {
+  //       res.status(400).send({ success: false, message: 'Failed to reject task.' });
+  //     }
+  //   } catch (error) {
+  //     console.error('Error rejecting task:', error);
+  //     res.status(500).send({ success: false, message: 'Internal server error.' });
+  //   }
+  // });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -305,6 +625,16 @@ async function run() {
         res.status(500).send({ message: 'Internal server error' });
     }
   });
+
+
+
+
+  // Worker pending task
+  app.get('/task/:email', async(req, res)=>{
+    const email = req.params.email;
+    const collectTask = submissionsCollection.find(email);
+    res.send(collectTask);
+  })
   
 
 
@@ -344,42 +674,78 @@ async function run() {
   });
 
   // submit tasks post part
-  app.post('/submissions', async (req, res) => {
-    const { task_id, task_title, payable_amount, worker_email, submission_details, worker_name, buyer_name, buyer_email, current_date, status } = req.body;
 
-    const submission = {
-      task_id,
-      task_title,
-      payable_amount,
-      worker_email,
-      submission_details,
-      worker_name,
-      buyer_name,
-      buyer_email,
-      current_date,
-      status
-    };
-    const result = await submissionsCollection.insertOne(submission);
+  app.post('/submissions', async (req, res) => {
+    const body = req.body;
+    // const submission = {
+    //   task_id,
+    //   task_title,
+    //   payable_amount,
+    //   worker_email,
+    //   submission_details,
+    //   worker_name,
+    //   buyer_email,
+    //   current_date,
+    //   status
+    // };
+    const result = await submissionsCollection.insertOne(body);
     res.send(result);
   });
-  // get all submission works
-  app.get('/allSubmissions', async(req, res) =>{
-    const result = await submissionsCollection.find().toArray();
-    res.send(result);
-  });
-  // get submission from particular email person
-  app.get('/allSubmissions/:email', async(req, res) =>{
-    const worker_email = req.params.worker_email;
-    const query = {email : worker_email}
+  // get all worker submission works
+  app.get('/buyersSubmissions/:email', async(req, res) =>{
+    const email = req.params.email;
+    const query = {buyer_email : email}
+    console.log(email, query);
     const result = await submissionsCollection.find(query).toArray();
     res.send(result);
   });
+  // get submission from particular email person
+  app.get('/allSubmissions/:email', async (req, res) => {
+    const worker_email = req.params.email; // Correctly extracting email from params
+    const query = { worker_email: worker_email }; // Filtering submissions based on worker's email
+
+    try {
+        const result = await submissionsCollection.find(query).toArray();
+        res.send(result);
+    } catch (error) {
+        console.error("Error fetching submissions:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+    }
+});
 
 
+  // accepting tasks
+  app.patch('/acceptTask', async (req, res) => {
+    try {
+      const { previousId, worker_email, workersCoin } = req.body;
+  
+      if (!previousId || !worker_email || !workersCoin) {
+        return res.status(400).send({ success: false, message: "Missing required fields" });
+      }
+  
+      const updateSubmission = await submissionsCollection.updateOne(
+        { _id: new ObjectId(previousId) },
+        { $set: { status: 'approved' } }
+      );
+  
+      const updateCoins = await userCollection.updateOne(
+        { email: worker_email },
+        { $inc: { coins: parseInt(workersCoin) } }
+      );
+  
+      if (updateSubmission.modifiedCount > 0 && updateCoins.modifiedCount > 0) {
+        res.send({ success: true, message: "Task accepted and coins transferred." });
+      } else {
+        res.status(400).send({ success: false, message: "Task update or coin transfer failed." });
+      }
+    } catch (error) {
+      res.status(500).send({ success: false, message: "Server error", error: error.message });
+    }
+  });
 
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
